@@ -5,6 +5,7 @@ import express from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
 import reviewRoutes from './backend/routes/reviews';
+import chatRoutes from './backend/routes/chat';
 import authRoutes from './backend/routes/auth';
 import restaurantRoutes from './backend/routes/restaurants';
 import menuRoutes from './backend/routes/menu';
@@ -19,6 +20,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 app.use('/api/reviews', reviewRoutes);
+app.use('/api/chat', chatRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/restaurants', restaurantRoutes);
 app.use('/api/menu', menuRoutes);

@@ -39,4 +39,32 @@ router.post('/login', async (req, res) => {
   }
 });
 
+// Update profile (name, email, password)
+router.patch('/profile', async (req: any, res) => {
+  try {
+    // Verify JWT token
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, JWT_SECRET) as { id: string };
+
+    const { name, email, password } = req.body;
+    const updateData: any = {};
+    if (name) updateData.name = name;
+    if (email) updateData.email = email;
+    if (password) {
+      updateData.password = await bcrypt.hash(password, 10);
+    }
+
+    const user = await User.findByIdAndUpdate(decoded.id, updateData, { new: true });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    res.json({ id: user._id, name: user.name, email: user.email, role: user.role, favorites: user.favorites });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 export default router;

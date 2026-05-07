@@ -9,6 +9,7 @@ import Profile from './pages/Profile';
 import AdminDashboard from './pages/AdminDashboard';
 import OrderConfirmation from './pages/Orderconfirmation';
 import { AppProvider } from './context/AppContext';
+import Chatbot from './components/Chatbot';
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/admin" element={<AdminDashboard />} />
           <Route path="/order-confirmation" element={<OrderConfirmation />} />
         </Routes>
+        <Chatbot />
       </BrowserRouter>
     </AppProvider>
   );
