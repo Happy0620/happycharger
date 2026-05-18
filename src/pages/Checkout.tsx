@@ -1,48 +1,101 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { loadStripe } from '@stripe/stripe-js';
-import { Elements, CardElement, useStripe, useElements } from '@stripe/react-stripe-js';
+import { QRCodeSVG } from 'qrcode.react';
 import { useAppContext } from '../context/AppContext';
 import Navbar from '../components/Navbar';
 
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
-
-function CheckoutForm({ total, onSuccess }: { total: number; onSuccess: () => void }) {
-  const stripe = useStripe();
-  const elements = useElements();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+export default function Checkout() {
+  const { cart, user, token, clearCart } = useAppContext();
+  const navigate = useNavigate();
+  const [method, setMethod] = useState<'COD' | 'ONLINE_QR'>('COD');
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [order, setOrder] = useState<any>(null); // To store pending order for QR flow
+  const [paid, setPaid] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const delivery = 2.99;
+  const total = subtotal + delivery;
+
+  const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!stripe || !elements) return;
+    if (cart.length === 0) {
+      alert('Your cart is empty!');
+      return;
+    }
     setLoading(true);
-    setError('');
+
     try {
-      const res = await fetch('/api/payment/create-payment-intent', {
+      const restaurantId = cart[0].restaurantId;
+      const res = await fetch('/api/orders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: total })
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({
+          userId: user?._id || user?.id,
+          restaurantId,
+          items: cart.map(i => ({ menuItemId: i.menuItemId || i._id, name: i.name, price: i.price, quantity: i.quantity })),
+          totalAmount: total,
+          deliveryAddress: address,
+          status: 'Pending',
+          paymentMethod: method,
+          paymentStatus: 'PENDING'
+        })
       });
-      const { clientSecret } = await res.json();
-      const result = await stripe.confirmCardPayment(clientSecret, {
-        payment_method: {
-          card: elements.getElement(CardElement)!,
-          billing_details: { name, address: { line1: address } }
-        }
-      });
-      if (result.error) {
-        setError(result.error.message || 'Payment failed');
+      const newOrder = await res.json();
+      if (!res.ok) {
+        throw new Error(newOrder.message || 'Failed to place order');
+      }
+      
+      if (method === 'COD') {
+        clearCart();
+        setPaid(true);
+        setTimeout(() => navigate('/orders'), 3000);
       } else {
-        onSuccess();
+        // ONLINE_QR flow
+        setOrder(newOrder);
       }
     } catch (err: any) {
-      setError('Payment failed. Please try again.');
+      console.error(err);
+      alert(err.message || 'Failed to place order');
     }
     setLoading(false);
   };
+
+  const handleSimulatePayment = async () => {
+    if (!order) return;
+    setLoading(true);
+    try {
+      const res = await fetch('/api/payment/confirm-qr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({
+          orderId: order._id,
+          transactionId: 'SIMULATED_TXN_' + Date.now()
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        clearCart();
+        setPaid(true);
+        setTimeout(() => navigate('/orders'), 3000);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Payment confirmation failed');
+    }
+    setLoading(false);
+  };
+
+  if (paid) return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', fontFamily: 'Poppins, sans-serif' }}>
+      <div style={{ width: 80, height: 80, borderRadius: '50%', background: '#D1FAE5', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
+        <i className='fa-solid fa-check' style={{ fontSize: '2rem', color: '#10B981' }}></i>
+      </div>
+      <h2 style={{ fontWeight: 800, marginBottom: 8 }}>Order Successful!</h2>
+      <p style={{ color: '#888' }}>Your order has been confirmed. Redirecting...</p>
+    </div>
+  );
 
   const s: Record<string, React.CSSProperties> = {
     input: { width: '100%', padding: '12px 16px', borderRadius: 12, border: '2px solid #eee', fontSize: '0.92rem', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit', marginBottom: 12 },
@@ -51,73 +104,12 @@ function CheckoutForm({ total, onSuccess }: { total: number; onSuccess: () => vo
   };
 
   return (
-    <form onSubmit={handleSubmit}>
-      <label style={s.label}>Full Name</label>
-      <input value={name} onChange={e => setName(e.target.value)} placeholder='John Doe' style={s.input} required />
-      <label style={s.label}>Delivery Address</label>
-      <input value={address} onChange={e => setAddress(e.target.value)} placeholder='123 Main St' style={s.input} required />
-      <label style={s.label}>Card Details</label>
-      <div style={{ padding: '14px 16px', borderRadius: 12, border: '2px solid #eee', marginBottom: 12 }}>
-        <CardElement options={{ style: { base: { fontSize: '16px', color: '#333', '::placeholder': { color: '#aaa' } } } }} />
-      </div>
-      <div style={{ background: '#FFF8F3', border: '1px solid #FFE0CC', borderRadius: 10, padding: '10px 14px', marginBottom: 12, fontSize: '0.8rem', color: '#888' }}>
-        <i className='fa-solid fa-circle-info' style={{ marginRight: 6, color: '#F88435' }}></i>
-        Test card: <strong>4242 4242 4242 4242</strong> | Any future date | Any CVC
-      </div>
-      {error && <div style={{ color: '#ef4444', fontSize: '0.85rem', marginBottom: 10 }}>{error}</div>}
-      <button type='submit' disabled={loading || !stripe} style={s.btn}>
-        {loading ? 'Processing...' : 'Pay $' + total.toFixed(2)}
-      </button>
-    </form>
-  );
-}
-
-export default function Checkout() {
-  const { cart, user, token, clearCart } = useAppContext();
-  const navigate = useNavigate();
-  const [paid, setPaid] = useState(false);
-
-  const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const delivery = 2.99;
-  const total = subtotal + delivery;
-
-  const handleSuccess = async () => {
-    setPaid(true);
-    if (cart.length > 0) {
-      const restaurantId = cart[0].restaurantId;
-      await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-        body: JSON.stringify({
-          userId: user?.id,
-          restaurantId,
-          items: cart.map(i => ({ name: i.name, price: i.price, quantity: i.quantity })),
-          totalAmount: total,
-          status: 'Confirmed',
-          paymentMethod: 'card',
-          paymentStatus: 'paid'
-        })
-      });
-      clearCart();
-    }
-    setTimeout(() => navigate('/orders'), 3000);
-  };
-
-  if (paid) return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', fontFamily: 'Poppins, sans-serif' }}>
-      <div style={{ width: 80, height: 80, borderRadius: '50%', background: '#D1FAE5', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
-        <i className='fa-solid fa-check' style={{ fontSize: '2rem', color: '#10B981' }}></i>
-      </div>
-      <h2 style={{ fontWeight: 800, marginBottom: 8 }}>Payment Successful!</h2>
-      <p style={{ color: '#888' }}>Your order has been confirmed. Redirecting...</p>
-    </div>
-  );
-
-  return (
     <div style={{ minHeight: '100vh', background: '#F8F8F8', fontFamily: 'Poppins, sans-serif' }}>
       <div className='container'><Navbar /></div>
       <div style={{ maxWidth: 520, margin: '40px auto', padding: '0 20px' }}>
         <h2 style={{ fontWeight: 800, marginBottom: 24 }}>Checkout</h2>
+        
+        {/* Order Summary */}
         <div style={{ background: 'white', borderRadius: 20, padding: 24, marginBottom: 20, boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
           <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#999', letterSpacing: '0.05em', marginBottom: 14, textTransform: 'uppercase' }}>Order Summary</div>
           {cart.map((item, i) => (
@@ -135,12 +127,58 @@ export default function Checkout() {
             </div>
           </div>
         </div>
-        <div style={{ background: 'white', borderRadius: 20, padding: 24, boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
-          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#999', letterSpacing: '0.05em', marginBottom: 16, textTransform: 'uppercase' }}>Payment Details</div>
-          <Elements stripe={stripePromise}>
-            <CheckoutForm total={total} onSuccess={handleSuccess} />
-          </Elements>
-        </div>
+
+        {/* Payment Flow */}
+        {!order ? (
+          <form onSubmit={handlePlaceOrder} style={{ background: 'white', borderRadius: 20, padding: 24, boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#999', letterSpacing: '0.05em', marginBottom: 16, textTransform: 'uppercase' }}>Delivery Details</div>
+            
+            <label style={s.label}>Full Name</label>
+            <input value={name} onChange={e => setName(e.target.value)} placeholder='John Doe' style={s.input} required />
+            <label style={s.label}>Delivery Address</label>
+            <input value={address} onChange={e => setAddress(e.target.value)} placeholder='123 Main St' style={s.input} required />
+
+            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#999', letterSpacing: '0.05em', marginTop: 16, marginBottom: 12, textTransform: 'uppercase' }}>Payment Method</div>
+            <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+              <div 
+                onClick={() => setMethod('COD')}
+                style={{ flex: 1, padding: '16px', borderRadius: 12, border: method === 'COD' ? '2px solid #F88435' : '2px solid #eee', background: method === 'COD' ? '#FFF8F3' : 'white', cursor: 'pointer', textAlign: 'center', fontWeight: 600, fontSize: '0.9rem', color: method === 'COD' ? '#F88435' : '#555' }}
+              >
+                Cash on Delivery
+              </div>
+              <div 
+                onClick={() => setMethod('ONLINE_QR')}
+                style={{ flex: 1, padding: '16px', borderRadius: 12, border: method === 'ONLINE_QR' ? '2px solid #F88435' : '2px solid #eee', background: method === 'ONLINE_QR' ? '#FFF8F3' : 'white', cursor: 'pointer', textAlign: 'center', fontWeight: 600, fontSize: '0.9rem', color: method === 'ONLINE_QR' ? '#F88435' : '#555' }}
+              >
+                Online Payment
+              </div>
+            </div>
+
+            <button type='submit' disabled={loading} style={s.btn}>
+              {loading ? 'Processing...' : method === 'COD' ? 'Place Order - $' + total.toFixed(2) : 'Proceed to Payment'}
+            </button>
+          </form>
+        ) : (
+          <div style={{ background: 'white', borderRadius: 20, padding: 32, boxShadow: '0 2px 12px rgba(0,0,0,0.06)', textAlign: 'center' }}>
+            <h3 style={{ fontWeight: 800, marginBottom: 12, fontSize: '1.4rem' }}>Scan to Pay</h3>
+            <p style={{ color: '#666', fontSize: '0.9rem', marginBottom: 24 }}>Scan the QR code below using your favorite payment app to complete your order of <strong>${total.toFixed(2)}</strong>.</p>
+            
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 24 }}>
+              <div style={{ padding: 16, background: 'white', borderRadius: 16, border: '1px solid #eee', display: 'inline-block' }}>
+                <QRCodeSVG value={`feasto://pay?orderId=${order._id}&amount=${total}`} size={200} />
+              </div>
+            </div>
+
+            <div style={{ background: '#FFF8F3', border: '1px solid #FFE0CC', borderRadius: 10, padding: '12px', marginBottom: 20, fontSize: '0.8rem', color: '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <i className='fa-solid fa-circle-info' style={{ color: '#F88435' }}></i>
+              For this demo, click below to simulate a successful payment.
+            </div>
+
+            <button onClick={handleSimulatePayment} disabled={loading} style={{ ...s.btn, background: loading ? '#ccc' : '#10B981', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              {loading ? 'Confirming...' : <><i className='fa-solid fa-check'></i> Simulate Payment Success</>}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

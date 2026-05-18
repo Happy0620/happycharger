@@ -21,6 +21,10 @@ export default function AdminDashboard() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('orders');
 
+  // Notifications state
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+
   // Orders state
   const [orders, setOrders] = useState<any[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
@@ -46,10 +50,28 @@ export default function AdminDashboard() {
 
   const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
 
-  useEffect(() => {
-    if (!user || user.role !== 'admin') { navigate('/'); return; }
-    fetchOrders();
-  }, [user, navigate]);
+  const fetchNotifications = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetch('/api/notifications', { headers: authHeaders });
+      const data = await res.json();
+      if (Array.isArray(data)) setNotifications(data);
+    } catch (err) {
+      console.error(err);
+    }
+  }, [token]);
+
+  const markAsRead = async (id: string) => {
+    await fetch(`/api/notifications/${id}/read`, { method: 'PATCH', headers: authHeaders });
+    fetchNotifications();
+  };
+
+  const markAllAsRead = async () => {
+    await fetch('/api/notifications/read-all', { method: 'PATCH', headers: authHeaders });
+    fetchNotifications();
+  };
+
+
 
   // ── Fetch Orders ──────────────────────────────────────────
   // JIRA: ADMIN-02 - Real-time Order Polling & Notifications
@@ -80,11 +102,20 @@ export default function AdminDashboard() {
     }
   }, [token, lastOrderCount]);
 
+  useEffect(() => {
+    if (!user || user.role !== 'admin') { navigate('/'); return; }
+    fetchOrders();
+    fetchNotifications();
+  }, [user, navigate, fetchOrders, fetchNotifications]);
+
   // Poll every 15 seconds for new orders
   useEffect(() => {
-    pollRef.current = setInterval(() => fetchOrders(true), 15000);
+    pollRef.current = setInterval(() => {
+      fetchOrders(true);
+      fetchNotifications();
+    }, 15000);
     return () => clearInterval(pollRef.current);
-  }, [fetchOrders]);
+  }, [fetchOrders, fetchNotifications]);
 
   // ── Fetch Restaurants ──────────────────────────────────────
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, setter: (val: string) => void) => {
@@ -214,6 +245,44 @@ export default function AdminDashboard() {
 
         {/* Main */}
         <main style={{ flex: 1, padding: '32px 40px', overflowY: 'auto' }}>
+
+          {/* Header & Notifications */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '24px', position: 'relative' }}>
+            <button 
+              onClick={() => setShowNotifications(!showNotifications)}
+              style={{ background: '#fff', border: '1px solid #EDE8E3', borderRadius: '50%', width: '44px', height: '44px', fontSize: '1.2rem', cursor: 'pointer', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}
+            >
+              🔔
+              {notifications.filter(n => !n.read).length > 0 && (
+                <span style={{ position: 'absolute', top: '-2px', right: '-2px', background: '#EF4444', color: 'white', fontSize: '0.65rem', fontWeight: 'bold', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {notifications.filter(n => !n.read).length}
+                </span>
+              )}
+            </button>
+
+            {/* Dropdown */}
+            {showNotifications && (
+              <div style={{ position: 'absolute', top: '50px', right: 0, width: '320px', background: '#fff', border: '1px solid #EDE8E3', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 100, overflow: 'hidden' }}>
+                <div style={{ padding: '12px 16px', borderBottom: '1px solid #EDE8E3', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#FAF8F5' }}>
+                  <h4 style={{ margin: 0, fontSize: '0.9rem', color: '#333' }}>Notifications</h4>
+                  <button onClick={markAllAsRead} style={{ background: 'none', border: 'none', color: '#F88435', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}>Mark all read</button>
+                </div>
+                <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                  {notifications.length === 0 ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: '#8A7060', fontSize: '0.85rem' }}>No notifications yet.</div>
+                  ) : notifications.map(n => (
+                    <div key={n._id} onClick={() => { if (!n.read) markAsRead(n._id); }} style={{ padding: '12px 16px', borderBottom: '1px solid #f5f5f5', background: n.read ? '#fff' : '#FFFBEB', cursor: n.read ? 'default' : 'pointer', transition: 'background 0.2s' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <span style={{ fontWeight: 600, fontSize: '0.85rem', color: '#333' }}>{n.title}</span>
+                        <span style={{ fontSize: '0.7rem', color: '#888' }}>{new Date(n.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                      </div>
+                      <p style={{ margin: 0, fontSize: '0.8rem', color: '#666', lineHeight: 1.4 }}>{n.message}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Stats */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '16px', marginBottom: '32px' }}>

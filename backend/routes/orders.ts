@@ -1,7 +1,8 @@
-import { sendOrderConfirmationEmail, sendStatusUpdateEmail } from '../services/email';
+import { sendOrderConfirmationEmail, sendStatusUpdateEmail, sendAdminNewOrderEmail } from '../services/email';
 import User from '../models/User';
 import express from 'express';
 import Order from '../models/Order';
+import Notification from '../models/Notification';
 
 const router = express.Router();
 
@@ -9,7 +10,13 @@ router.post('/', async (req: any, res: any) => {
   try {
     const order = new Order(req.body);
     await order.save();
-    try { const user = await User.findById(order.userId); if (user?.email) await sendOrderConfirmationEmail(user.email, user.name, order); } catch(e) {}
+    
+    if (order.paymentMethod === 'COD') {
+      try { const user = await User.findById(order.userId); if (user?.email) await sendOrderConfirmationEmail(user.email, user.name, order); } catch(e) {}
+      try { await sendAdminNewOrderEmail(order); } catch (e) {}
+      try { await new Notification({ title: 'New Order Received', message: `Order #${order._id} has been placed for $${order.totalAmount.toFixed(2)} (COD).`, type: 'NEW_ORDER' }).save(); } catch(e) {}
+    }
+    
     res.status(201).json(order);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
